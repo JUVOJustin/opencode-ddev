@@ -43,8 +43,8 @@ Example commands that will be automatically wrapped:
 - `ls -la` → `ddev exec --dir="/var/www/html" bash -c "ls -la"`
 - `npm install` → `ddev exec --dir="/var/www/html" bash -c "npm install"`
 
-Commands that run on host (not wrapped):
-- `git status`
-- `gh pr create`
-- `docker ps`
-- `ddev describe`
+Bash tool commands that run on host (not wrapped):
+- `git`
+- `gh`
+- `docker`
+- `ddev`
