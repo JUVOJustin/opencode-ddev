@@ -68,7 +68,7 @@ export const DDEVPlugin: Plugin = async ({ project, client, $, directory, worktr
   };
 
   /**
-   * Notifies LLM about DDEV environment once per session
+   * Notifies LLM about DDEV environment on first command execution
    */
   const notifyDdevInSession = async (): Promise<void> => {
     if (hasNotifiedSession || !currentSessionId) {
@@ -169,14 +169,8 @@ export const DDEVPlugin: Plugin = async ({ project, client, $, directory, worktr
   return {
     event: async ({ event }) => {
       if (event.type === 'session.created') {
-
         currentSessionId = event.properties.info.id;
         hasNotifiedSession = false;
-
-        if (isDdevAvailable) {
-          // Notify LLM about DDEV environment
-          await notifyDdevInSession();
-        }
       }
     },
 
@@ -193,6 +187,11 @@ export const DDEVPlugin: Plugin = async ({ project, client, $, directory, worktr
 
       if (shouldRunOnHost(originalCommand)) {
         return;
+      }
+
+      // Notify LLM about DDEV environment on first wrapped command execution
+      if (!hasNotifiedSession) {
+        await notifyDdevInSession();
       }
 
       const wrappedCommand = wrapWithDdevExec(originalCommand);

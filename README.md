@@ -8,7 +8,7 @@ DDEV Plugin for OpenCode - Automatically detects DDEV availability and wraps bas
 - **Container Command Wrapping**: Automatically wraps bash commands with `ddev exec` for container execution
 - **Host-Only Commands**: Preserves commands that should run on the host (git, gh, docker, ddev)
 - **Path Mapping**: Maps host directories to container paths correctly using JSON-based project detection
-- **Session Notifications**: Notifies the LLM about DDEV environment once per session
+- **Session Notifications**: Notifies the LLM about DDEV environment only on first bash command execution (to save tokens)
 
 ## How to Include as Submodule
 
