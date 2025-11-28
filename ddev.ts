@@ -113,7 +113,7 @@ export const DDEVPlugin: Plugin = async ({ project, client, $, directory, worktr
   };
 
   /**
-   * Cleans host paths from command and removes redundant cd commands.
+   * Cleans host paths from the command and removes redundant cd commands.
    * 
    * - Converts host working directory paths to relative paths
    * - Converts other project root paths to container paths
@@ -153,7 +153,7 @@ export const DDEVPlugin: Plugin = async ({ project, client, $, directory, worktr
 
     cleanedCommand = cleanedCommand.replace(hostWorkingDirRegex, (match, suffix) => {
       const relativePath = suffix ? suffix.slice(1) : '.';
-      return relativePath || '.';
+      return relativePath;
     });
 
     // Replace any remaining project root paths with container paths
@@ -170,7 +170,7 @@ export const DDEVPlugin: Plugin = async ({ project, client, $, directory, worktr
     });
 
     // Remove redundant "cd . &&" prefix (result of cd to current working dir)
-    cleanedCommand = cleanedCommand.replace(/^\s*cd\s+(['"]?)\.?\1\s*&&\s*/, '');
+    cleanedCommand = cleanedCommand.replace(/^\s*cd\s+(?:\.|(["'])\.?\1)\s*&&\s*/, '');
 
     return cleanedCommand;
   };
@@ -256,7 +256,7 @@ export const DDEVPlugin: Plugin = async ({ project, client, $, directory, worktr
 
       // Only cache when running; stopped state should be re-checked
       if (raw.status !== 'running') {
-        // Store temporarily for status check but don't cache long-term
+        // Do not cache stopped state; force re-check next time
         ddevCache = { timestamp: 0, raw };
         return;
       }
@@ -294,6 +294,9 @@ export const DDEVPlugin: Plugin = async ({ project, client, $, directory, worktr
 
   // Initialize DDEV detection
   await refreshDdevCache();
+
+  // Capture availability at initialization for tool registration
+  const hasProject = isAvailable();
 
   return {
     event: async ({ event }) => {
@@ -355,7 +358,7 @@ export const DDEVPlugin: Plugin = async ({ project, client, $, directory, worktr
     },
 
     // Register custom tools only if DDEV project exists (running or stopped)
-    ...(isAvailable() ? {
+    ...(hasProject ? {
       tool: {
         ddev_logs: createDdevLogsTool($),
       },
