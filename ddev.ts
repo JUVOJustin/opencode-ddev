@@ -12,13 +12,26 @@ export const DDEVPlugin: Plugin = async ({ project, client, $, directory, worktr
   const HOST_ONLY_COMMANDS = ['git', 'gh', 'docker', 'ddev'] as const;
   const CACHE_DURATION_MS = 120000; // 2 minutes
 
-  type DdevStatus = {
-    available: boolean;    // Is DDEV installed and configured for this project?
-    running: boolean;      // Is DDEV currently running?
+  /**
+   * Raw DDEV project data from `ddev describe -j`
+   */
+  type DdevRawData = {
+    shortroot?: string;
+    approot?: string;
+    status?: string;
+    name?: string;
+    [key: string]: unknown;
   };
 
-  let lastCheck: { timestamp: number; status: DdevStatus } | null = null;
-  let containerWorkingDir: string = CONTAINER_ROOT;
+  /**
+   * Cached DDEV state with timestamp for cache invalidation
+   */
+  type DdevCache = {
+    timestamp: number;
+    raw: DdevRawData;
+  };
+
+  let ddevCache: DdevCache | null = null;
   let currentSessionId: string | null = null;
   let hasNotifiedSession = false;
   let hasAskedToStart = false;
@@ -36,24 +49,29 @@ export const DDEVPlugin: Plugin = async ({ project, client, $, directory, worktr
   };
 
   /**
-   * Extracts DDEV project path and status from JSON describe output
+   * Gets the project root path from cached DDEV data
    */
-  const extractProjectInfo = (jsonOutput: string): { path: string | null; status: string | null } => {
-    try {
-      const data = JSON.parse(jsonOutput);
-
-      // The project path is in the "raw.shortroot" or "raw.approot" field
-      const projectPath = data?.raw?.shortroot || data?.raw?.approot;
-      const status = data?.raw?.status;
-
-      return {
-        path: projectPath ? expandHomePath(projectPath) : null,
-        status: status || null,
-      };
-    } catch (error) {
-      console.error(`Failed to parse DDEV JSON output: ${error instanceof Error ? error.message : String(error)}`);
-      return { path: null, status: null };
+  const getProjectRoot = (): string | null => {
+    if (!ddevCache?.raw) {
+      return null;
     }
+
+    const rawPath = ddevCache.raw.shortroot || ddevCache.raw.approot;
+    return rawPath ? expandHomePath(rawPath) : null;
+  };
+
+  /**
+   * Checks if DDEV is currently running based on cached data
+   */
+  const isRunning = (): boolean => {
+    return ddevCache?.raw?.status === 'running';
+  };
+
+  /**
+   * Checks if DDEV project is available (installed and configured)
+   */
+  const isAvailable = (): boolean => {
+    return ddevCache !== null;
   };
 
   /**
@@ -76,7 +94,91 @@ export const DDEVPlugin: Plugin = async ({ project, client, $, directory, worktr
   };
 
   /**
-   * Add to context that ddev can be started
+   * Gets the container working directory based on current host directory
+   */
+  const getContainerWorkingDir = (): string => {
+    const projectRoot = getProjectRoot();
+    if (!projectRoot) {
+      return CONTAINER_ROOT;
+    }
+
+    return mapToContainerPath(directory, projectRoot);
+  };
+
+  /**
+   * Escapes special regex characters in a string
+   */
+  const escapeRegex = (str: string): string => {
+    return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  };
+
+  /**
+   * Cleans host paths from the command and removes redundant cd commands.
+   * 
+   * - Converts host working directory paths to relative paths
+   * - Converts other project root paths to container paths
+   * - Removes `cd . &&` prefix (no-op after path conversion)
+   * 
+   * Examples:
+   *   mkdir -p /Users/foo/project/wp-content/plugins/sync/src/Class
+   *   → mkdir -p src/Class (when --dir is /var/www/html/wp-content/plugins/sync)
+   * 
+   *   cd /Users/foo/project/wp-content/plugins/sync && composer install
+   *   → composer install (cd to current dir is removed)
+   * 
+   *   cd /Users/foo/project/wp-content/themes && ls
+   *   → cd /var/www/html/wp-content/themes && ls (different dir is converted)
+   */
+  const cleanCommand = (command: string): string => {
+    const projectRoot = getProjectRoot();
+    if (!projectRoot) {
+      return command;
+    }
+
+    const containerWorkingDir = getContainerWorkingDir();
+
+    // Calculate the host path that corresponds to the container working directory
+    const containerRelative = containerWorkingDir.slice(CONTAINER_ROOT.length).replace(/^\//, '');
+    const hostWorkingDir = containerRelative
+      ? `${projectRoot}/${containerRelative}`
+      : projectRoot;
+
+    let cleanedCommand = command;
+
+    // Replace full host working directory paths with relative paths
+    const hostWorkingDirRegex = new RegExp(
+      escapeRegex(hostWorkingDir) + '(/[^\\s"\']*|(?=[\\s"\']|$))',
+      'g'
+    );
+
+    cleanedCommand = cleanedCommand.replace(hostWorkingDirRegex, (match, suffix) => {
+      const relativePath = suffix ? suffix.slice(1) : '.';
+      return relativePath;
+    });
+
+    // Replace any remaining project root paths with container paths (skip if same as hostWorkingDir)
+    if (hostWorkingDir !== projectRoot) {
+      const projectRootRegex = new RegExp(
+        escapeRegex(projectRoot) + '(/[^\\s"\']*|(?=[\\s"\']|$))',
+        'g'
+      );
+
+      cleanedCommand = cleanedCommand.replace(projectRootRegex, (match, suffix) => {
+        if (!suffix) {
+          return CONTAINER_ROOT;
+        }
+        return `${CONTAINER_ROOT}${suffix}`;
+      });
+    }
+
+    // Remove redundant "cd . &&" prefix (result of cd to current working dir)
+    cleanedCommand = cleanedCommand.replace(/^\s*cd\s+(?:\.|(["'])\.?\1)\s*&&\s*/, '');
+
+    return cleanedCommand;
+  };
+
+  /**
+   * Prompts user to start DDEV when it's stopped
    */
   const askToStartDdev = async (): Promise<void> => {
     if (hasAskedToStart || !currentSessionId) {
@@ -106,6 +208,8 @@ export const DDEVPlugin: Plugin = async ({ project, client, $, directory, worktr
       return;
     }
 
+    const containerWorkingDir = getContainerWorkingDir();
+
     await client.session.prompt({
       path: { id: currentSessionId },
       body: {
@@ -122,59 +226,69 @@ export const DDEVPlugin: Plugin = async ({ project, client, $, directory, worktr
   };
 
   /**
-   * Checks DDEV availability and status
-   * Uses caching to avoid repeated checks (cache expires after 1 minute)
-   * 
-   * Returns:
-   * - available: true if DDEV is installed and configured for this project
-   * - running: true if DDEV containers are currently running
-   * 
-   * Side effects when running:
-   * - Sets containerWorkingDir based on project path
+   * Logs a message using OpenCode's app-level logging
    */
-  async function checkDdevStatus(): Promise<DdevStatus> {
-    // Return cached status if still valid
+  const log = async (level: 'debug' | 'info' | 'warn' | 'error', message: string): Promise<void> => {
+    await client.app.log({
+      body: {
+        service: 'ddev-plugin',
+        level,
+        message,
+      },
+    });
+  };
+
+  /**
+   * Fetches and caches DDEV project data.
+   * Uses caching to avoid repeated checks (cache expires after 2 minutes).
+   * Only caches when DDEV is running; stopped/unavailable states are not cached.
+   */
+  async function refreshDdevCache(): Promise<void> {
     const now = Date.now();
-    if (lastCheck && now - lastCheck.timestamp < CACHE_DURATION_MS) {
-      return lastCheck.status;
+
+    // Return if cache is still valid
+    if (ddevCache && now - ddevCache.timestamp < CACHE_DURATION_MS) {
+      return;
     }
 
-    // Perform the check
     try {
       const result = await $`ddev describe -j`.quiet().nothrow();
 
       // DDEV not available (not installed or no project)
       if (result.exitCode !== 0) {
-        const status: DdevStatus = { available: false, running: false };
-        lastCheck = null; // Don't cache failures
-        return status;
+        ddevCache = null;
+        return;
       }
 
       const output = result.stdout.toString();
-      const { path: projectRoot, status: projectStatus } = extractProjectInfo(output);
 
-      // DDEV is available but stopped
-      if (projectStatus === 'stopped') {
-        const status: DdevStatus = { available: true, running: false };
-        lastCheck = null; // Don't cache stopped state
-        return status;
+      let data;
+      try {
+        data = JSON.parse(output);
+      } catch (parseError) {
+        await log('error', `Failed to parse DDEV JSON output: ${parseError instanceof Error ? parseError.message : String(parseError)}`);
+        ddevCache = null;
+        return;
       }
 
-      // DDEV is available and running - configure paths
-      if (projectRoot) {
-        containerWorkingDir = mapToContainerPath(directory, projectRoot);
-      } else {
-        containerWorkingDir = CONTAINER_ROOT;
+      const raw = data?.raw as DdevRawData | undefined;
+
+      if (!raw) {
+        ddevCache = null;
+        return;
       }
 
-      const status: DdevStatus = { available: true, running: true };
-      lastCheck = { timestamp: now, status };
-      return status;
+      // Only cache when running; stopped state should be re-checked
+      if (raw.status !== 'running') {
+        // Do not cache stopped state; force re-check next time
+        ddevCache = { timestamp: 0, raw };
+        return;
+      }
+
+      ddevCache = { timestamp: now, raw };
     } catch (error) {
-      console.error(`DDEV status check failed: ${error instanceof Error ? error.message : String(error)}`);
-      const status: DdevStatus = { available: false, running: false };
-      lastCheck = null;
-      return status;
+      await log('error', `DDEV status check failed: ${error instanceof Error ? error.message : String(error)}`);
+      ddevCache = null;
     }
   }
 
@@ -191,40 +305,22 @@ export const DDEVPlugin: Plugin = async ({ project, client, $, directory, worktr
   };
 
   /**
-   * Removes redundant cd command if it matches current directory
-   */
-  const removeRedundantCd = (command: string): string => {
-    // Regex to match: cd <path> && (rest of command)
-    // Handles optional whitespace and quotes around path
-    const cdRegex = /^\s*cd\s+(['"]?)([^\s&;|'"]+)\1\s*&&\s*/;
-    const match = command.match(cdRegex);
-
-    if (!match) {
-      return command;
-    }
-
-    const cdPath = match[2];
-
-    // Check if cd path matches current directory
-    if (cdPath === directory) {
-      const cleanedCommand = command.replace(cdRegex, '');
-      return cleanedCommand;
-    }
-
-    return command;
-  };
-
-  /**
-   * Wraps command with ddev exec for container execution
+   * Wraps command with ddev exec for container execution.
+   * Cleans host paths and removes redundant cd commands.
    */
   const wrapWithDdevExec = (command: string): string => {
-    const cleanedCommand = removeRedundantCd(command);
+    const cleanedCommand = cleanCommand(command);
+    const containerWorkingDir = getContainerWorkingDir();
     const escapedCommand = JSON.stringify(cleanedCommand);
-    return `ddev exec --dir="${containerWorkingDir}" bash -c ${escapedCommand}`;
+
+    return `ddev exec --dir=${JSON.stringify(containerWorkingDir)} bash -c ${escapedCommand}`;
   };
 
-  // Initialize DDEV detection (initial check)
-  const initialStatus = await checkDdevStatus();
+  // Initialize DDEV detection
+  await refreshDdevCache();
+
+  // Capture availability at initialization for tool registration
+  const hasProject = isAvailable();
 
   return {
     event: async ({ event }) => {
@@ -246,22 +342,22 @@ export const DDEVPlugin: Plugin = async ({ project, client, $, directory, worktr
         return;
       }
 
-      // Check DDEV status (with caching)
-      const status = await checkDdevStatus();
+      // Refresh DDEV cache (with caching)
+      await refreshDdevCache();
 
-      // DDEV not available at all - exit early
-      if (!status.available) {
+      // DDEV not available - exit early
+      if (!isAvailable()) {
         return;
       }
 
       // DDEV available but stopped - ask user to start it
-      if (!status.running && !hasAskedToStart) {
+      if (!isRunning() && !hasAskedToStart) {
         await askToStartDdev();
         return;
       }
 
       // DDEV not running - don't wrap commands
-      if (!status.running) {
+      if (!isRunning()) {
         return;
       }
 
@@ -275,18 +371,12 @@ export const DDEVPlugin: Plugin = async ({ project, client, $, directory, worktr
 
       // Log if command was modified
       if (originalCommand !== wrappedCommand && !originalCommand.startsWith('ddev exec')) {
-        await client.app.log({
-          body: {
-            service: 'ddev-plugin',
-            level: 'debug',
-            message: `Wrapped command (cd removed if redundant): ${originalCommand.substring(0, 80)}${originalCommand.length > 80 ? '...' : ''}`,
-          },
-        });
+        await log('debug', `Wrapped command: ${originalCommand.substring(0, 80)}${originalCommand.length > 80 ? '...' : ''}`);
       }
     },
 
     // Register custom tools only if DDEV project exists (running or stopped)
-    ...(initialStatus.available ? {
+    ...(hasProject ? {
       tool: {
         ddev_logs: createDdevLogsTool($),
       },
