@@ -1,4 +1,4 @@
-import { tool } from "@opencode-ai/plugin";
+import { tool } from "@opencode-ai/plugin/tool";
 
 /**
  * Creates a DDEV logs tool for viewing container logs
