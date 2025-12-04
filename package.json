@@ -1,0 +1,36 @@
+{
+  "name": "opencode-ddev",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Adds context about ddev setup and improves command calling",
+  "main": "ddev.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JUVOJustin/opencode-ddev-plugin.git"
+  },
+  "keywords": [
+    "opencode",
+    "ddev"
+  ],
+  "author": "Justin Vogt",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/JUVOJustin/opencode-ddev-plugin/issues"
+  },
+  "homepage": "https://github.com/JUVOJustin/opencode-ddev-plugin#readme",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": "^1.0.126"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "^1.0.126",
+    "@types/node": "^24.10.1",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "@opencode-ai/sdk": "^1.0.126"
+  }
+}

@@ -12,25 +12,22 @@ DDEV Plugin for OpenCode - Automatically detects DDEV availability and wraps bas
 - **Session Notifications**: Notifies the LLM about DDEV environment only on first bash command execution (to save tokens)
 - **Custom DDEV Logs Tool**: Provides a `ddev_logs` tool for retrieving logs from DDEV services
 
-## How to Include as Submodule
+## Installation
+Add to your opencode.json or ~/.config/opencode/opencode.json:
 
-Add this plugin to your OpenCode configuration as a Git submodule:
-
-```bash
-# Add the submodule
-git submodule add git@github.com:JUVOJustin/opencode-ddev-plugin.git plugin/ddev
-
-# Create an index.js file in the plugin root directory
-echo 'export { DDEVPlugin } from "./ddev/ddev.js";' > plugin/index.js
-
-# Commit the changes
-git add .gitmodules plugin/ddev plugin/index.js
-git commit -m "Add DDEV plugin as submodule"
+```json
+{
+  "plugin": ["opencode-ddev"]
+}
 ```
 
-## Loading the Plugin
+OpenCode auto-installs plugins on startup.
 
-To load plugins from the plugin subfolder, ensure your OpenCode configuration includes the plugin directory. The plugin will be automatically discovered and loaded.
+### Update
+Force update to latest:
+
+`rm -rf ~/.cache/opencode`
+Then restart OpenCode.
 
 ## Usage
 
