@@ -1,6 +1,6 @@
 # opencode-ddev-plugin
 
-DDEV Plugin for OpenCode - Automatically detects DDEV availability and wraps bash commands to execute inside the DDEV container.
+DDEV Plugin for [OpenCode](https://opencode.ai) - Automatically detects DDEV availability and wraps bash commands to execute inside the DDEV container.
 
 ## Features
 
@@ -42,6 +42,20 @@ Once installed, the plugin will:
 Example commands that will be automatically wrapped:
 - `ls -la` → `ddev exec --dir="/var/www/html" bash -c "ls -la"`
 - `npm install` → `ddev exec --dir="/var/www/html" bash -c "npm install"`
+
+## Path Cleaning
+
+Host paths in commands are automatically converted to container-compatible paths before wrapping with `ddev exec`:
+
+| Input | Output | Notes |
+|-------|--------|-------|
+| `mkdir /Users/foo/project/src` | `ddev exec ... "mkdir src"` | Current dir path → relative |
+| `cd /Users/foo/project && ls` | `ddev exec ... "ls"` | Redundant cd removed |
+| `cat /Users/foo/project/themes/style.css` | `ddev exec ... "cat /var/www/html/themes/style.css"` | Other paths → container paths |
+
+## DDEV Availability Check
+
+The plugin checks DDEV status using `ddev describe -j` to determine if a project exists and whether it's running. Results are cached for 2 minutes when DDEV is running to avoid repeated checks. Stopped or unavailable states are not cached and will be re-checked on every bash command to detect when DDEV starts.
 
 Bash tool commands that run on host (not wrapped):
 - `git`
