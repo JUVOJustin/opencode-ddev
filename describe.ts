@@ -86,7 +86,7 @@ export async function getDdevDescribeData($: any): Promise<DdevDescribeRaw | nul
 
     try {
       const data = JSON.parse(output);
-      return data?.raw as DdevDescribeRaw | undefined ?? null;
+      return (data?.raw as DdevDescribeRaw) ?? null;
     } catch {
       return null;
     }

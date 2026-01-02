@@ -196,33 +196,35 @@ export const DDEVPlugin: Plugin = async ({ project, client, $, directory, worktr
     hasAskedToStart = true;
   };
 
-    /**
-     * Notifies LLM about DDEV environment on first command execution
-     */
-    const notifyDdevInSession = async (): Promise<void> => {
-      if (hasNotifiedSession || !currentSessionId) {
-        return;
-      }
+  /**
+   * Notifies LLM about DDEV environment on first command execution
+   * 
+   * @link https://docs.ddev.com/en/stable/users/extend/customization-extendibility/#environment-variables-for-containers-and-services 
+   */
+  const notifyDdevInSession = async (): Promise<void> => {
+    if (hasNotifiedSession || !currentSessionId) {
+      return;
+    }
 
-      const containerWorkingDir = getContainerWorkingDir();
-      const projectRoot = getProjectRoot();
-      const envFilePath = projectRoot ? `${projectRoot}/.ddev/.env` : '.ddev/.env';
-      const projectType = ddevCache?.raw?.type ? ` (${ddevCache.raw.type})` : '';
+    const containerWorkingDir = getContainerWorkingDir();
+    const projectRoot = getProjectRoot();
+    const envFilePath = projectRoot ? `${projectRoot}/.ddev/.env` : '.ddev/.env';
+    const projectType = ddevCache?.raw?.type ? ` (${ddevCache.raw.type})` : '';
 
-      await client.session.prompt({
-        path: { id: currentSessionId },
-        body: {
-          parts: [
-            {
-              type: 'text',
-              text: `➡️  DDEV is used${projectType}. Execute commands like this: \`ddev exec --dir="${containerWorkingDir}" bash -c <command>\`. Use \`ddev_logs\` tool to view logs and \`ddev_describe\` tool to get project info (domain, ports, status). Environment variables are defined in \`${envFilePath}\` not in local .env files.`,
-            },
-          ],
-          noReply: true,
-        },
-      });
-      hasNotifiedSession = true;
-    };
+    await client.session.prompt({
+      path: { id: currentSessionId },
+      body: {
+        parts: [
+          {
+            type: 'text',
+            text: `➡️  DDEV is used${projectType}. Execute commands like this: \`ddev exec --dir="${containerWorkingDir}" bash -c <command>\`. Use \`ddev_logs\` tool to view logs and \`ddev_describe\` tool to get project info (domain, ports, status). Environment variables are defined in \`${envFilePath}\` not in local .env files.`,
+          },
+        ],
+        noReply: true,
+      },
+    });
+    hasNotifiedSession = true;
+  };
 
   /**
    * Logs a message using OpenCode's app-level logging
