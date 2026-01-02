@@ -23,14 +23,14 @@
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
-    "@opencode-ai/plugin": "^1.0.126"
+    "@opencode-ai/plugin": "^1.0.188"
   },
   "devDependencies": {
-    "@opencode-ai/plugin": "^1.0.126",
-    "@types/node": "^24.10.1",
+    "@opencode-ai/plugin": "^1.0.188",
+    "@types/node": "^25.0.3",
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "@opencode-ai/sdk": "^1.0.126"
+    "@opencode-ai/sdk": "^1.0.188"
   }
 }

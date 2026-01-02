@@ -1,5 +1,7 @@
 import type { Plugin } from "@opencode-ai/plugin";
 import { createDdevLogsTool } from "./logs";
+import { createDdevDescribeTool, getDdevDescribeData } from "./describe";
+import type { DdevDescribeRaw } from "./describe";
 
 /**
  * DDEV Plugin for OpenCode
@@ -9,19 +11,13 @@ import { createDdevLogsTool } from "./logs";
  */
 export const DDEVPlugin: Plugin = async ({ project, client, $, directory, worktree }) => {
   const CONTAINER_ROOT = '/var/www/html' as const;
-  const HOST_ONLY_COMMANDS = ['git', 'gh', 'docker', 'ddev'] as const;
+  const HOST_ONLY_COMMANDS = ['git', 'gh', 'docker', 'ddev', 'curl'] as const;
   const CACHE_DURATION_MS = 120000; // 2 minutes
 
   /**
    * Raw DDEV project data from `ddev describe -j`
    */
-  type DdevRawData = {
-    shortroot?: string;
-    approot?: string;
-    status?: string;
-    name?: string;
-    [key: string]: unknown;
-  };
+  type DdevRawData = DdevDescribeRaw;
 
   /**
    * Cached DDEV state with timestamp for cache invalidation
@@ -200,30 +196,33 @@ export const DDEVPlugin: Plugin = async ({ project, client, $, directory, worktr
     hasAskedToStart = true;
   };
 
-  /**
-   * Notifies LLM about DDEV environment on first command execution
-   */
-  const notifyDdevInSession = async (): Promise<void> => {
-    if (hasNotifiedSession || !currentSessionId) {
-      return;
-    }
+    /**
+     * Notifies LLM about DDEV environment on first command execution
+     */
+    const notifyDdevInSession = async (): Promise<void> => {
+      if (hasNotifiedSession || !currentSessionId) {
+        return;
+      }
 
-    const containerWorkingDir = getContainerWorkingDir();
+      const containerWorkingDir = getContainerWorkingDir();
+      const projectRoot = getProjectRoot();
+      const envFilePath = projectRoot ? `${projectRoot}/.ddev/.env` : '.ddev/.env';
+      const projectType = ddevCache?.raw?.type ? ` (${ddevCache.raw.type})` : '';
 
-    await client.session.prompt({
-      path: { id: currentSessionId },
-      body: {
-        parts: [
-          {
-            type: 'text',
-            text: `➡️  DDEV environment is used. Execute commands inside the DDEV container like this: \`ddev exec --dir="${containerWorkingDir}" bash -c <command>\``,
-          },
-        ],
-        noReply: true,
-      },
-    });
-    hasNotifiedSession = true;
-  };
+      await client.session.prompt({
+        path: { id: currentSessionId },
+        body: {
+          parts: [
+            {
+              type: 'text',
+              text: `➡️  DDEV is used${projectType}. Execute commands like this: \`ddev exec --dir="${containerWorkingDir}" bash -c <command>\`. Use \`ddev_logs\` tool to view logs and \`ddev_describe\` tool to get project info (domain, ports, status). Environment variables are defined in \`${envFilePath}\` not in local .env files.`,
+            },
+          ],
+          noReply: true,
+        },
+      });
+      hasNotifiedSession = true;
+    };
 
   /**
    * Logs a message using OpenCode's app-level logging
@@ -252,27 +251,9 @@ export const DDEVPlugin: Plugin = async ({ project, client, $, directory, worktr
     }
 
     try {
-      const result = await $`ddev describe -j`.quiet().nothrow();
+      const raw = await getDdevDescribeData($);
 
       // DDEV not available (not installed or no project)
-      if (result.exitCode !== 0) {
-        ddevCache = null;
-        return;
-      }
-
-      const output = result.stdout.toString();
-
-      let data;
-      try {
-        data = JSON.parse(output);
-      } catch (parseError) {
-        await log('error', `Failed to parse DDEV JSON output: ${parseError instanceof Error ? parseError.message : String(parseError)}`);
-        ddevCache = null;
-        return;
-      }
-
-      const raw = data?.raw as DdevRawData | undefined;
-
       if (!raw) {
         ddevCache = null;
         return;
@@ -280,7 +261,6 @@ export const DDEVPlugin: Plugin = async ({ project, client, $, directory, worktr
 
       // Only cache when running; stopped state should be re-checked
       if (raw.status !== 'running') {
-        // Do not cache stopped state; force re-check next time
         ddevCache = { timestamp: 0, raw };
         return;
       }
@@ -379,6 +359,7 @@ export const DDEVPlugin: Plugin = async ({ project, client, $, directory, worktr
     ...(hasProject ? {
       tool: {
         ddev_logs: createDdevLogsTool($),
+        ddev_describe: createDdevDescribeTool($),
       },
     } : {}),
   };
