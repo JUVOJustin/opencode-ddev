@@ -1,15 +1,13 @@
 # opencode-ddev-plugin
 
-DDEV Plugin for [OpenCode](https://opencode.ai) - Automatically detects DDEV availability and wraps bash commands to execute inside the DDEV container.
+DDEV Plugin for [OpenCode](https://opencode.ai) - Detects DDEV availability and provides optional container execution guidance.
 
 ## Features
 
 - **Automatic DDEV Detection**: Checks if DDEV is available using `ddev describe -j` for structured JSON output
-- **Stopped Container Detection**: Detects when DDEV is available but stopped, and prompts to start it
-- **Container Command Wrapping**: Automatically wraps bash commands with `ddev exec` for container execution
-- **Host-Only Commands**: Preserves commands that should run on the host (git, gh, docker, ddev)
-- **Path Mapping**: Maps host directories to container paths correctly using JSON-based project detection
-- **Session Notifications**: Notifies the LLM about DDEV environment only on first bash command execution (to save tokens)
+- **Status-Aware Context Message**: Announces running/stopped status with a clear `ddev exec` example
+- **Optional Container Execution**: Commands run on the host by default; use `ddev exec` when you need container context
+- **Session and Compaction Prompts**: Sends the context message on session creation and after compaction
 - **Custom DDEV Logs Tool**: Provides a `ddev_logs` tool for retrieving logs from DDEV services
 
 ## Installation
@@ -33,35 +31,32 @@ Then restart OpenCode.
 
 Once installed, the plugin will:
 
-1. Automatically detect DDEV availability and status when a session starts
-2. Adds context to start DDEV if it's detected but stopped
-3. Wrap bash commands to execute inside the DDEV container (when running)
-4. Preserve host-only commands (git, gh, docker, ddev) to run on the host
-5. Map working directories correctly between host and container
+1. Detect DDEV availability and status on session creation and compaction
+2. Add a context message with a clear example for optional container execution
+3. Keep commands on the host by default (no automatic wrapping)
+4. Register `ddev_logs` when a DDEV project is detected
 
-Example commands that will be automatically wrapped:
-- `ls -la` → `ddev exec --dir="/var/www/html" bash -c "ls -la"`
-- `npm install` → `ddev exec --dir="/var/www/html" bash -c "npm install"`
+### Manual Container Execution
 
-## Path Cleaning
+If you need a command to run inside the container, execute it manually:
 
-Host paths in commands are automatically converted to container-compatible paths before wrapping with `ddev exec`:
+- `ddev exec --dir="/var/www/html" bash -c "composer install"`
 
-| Input | Output | Notes |
-|-------|--------|-------|
-| `mkdir /Users/foo/project/src` | `ddev exec ... "mkdir src"` | Current dir path → relative |
-| `cd /Users/foo/project && ls` | `ddev exec ... "ls"` | Redundant cd removed |
-| `cat /Users/foo/project/themes/style.css` | `ddev exec ... "cat /var/www/html/themes/style.css"` | Other paths → container paths |
+The `--dir` value in the context message reflects your current working directory mapped into the container.
 
 ## DDEV Availability Check
 
 The plugin checks DDEV status using `ddev describe -j` to determine if a project exists and whether it's running. Results are cached for 2 minutes when DDEV is running to avoid repeated checks. Stopped or unavailable states are not cached and will be re-checked on every bash command to detect when DDEV starts.
 
-Bash tool commands that run on host (not wrapped):
-- `git`
-- `gh`
-- `docker`
-- `ddev`
+## Agent Skill
+
+The plugin ships with a bundled DDEV agent skill in `skills/ddev/`. It teaches the AI agent how to work with DDEV projects, including:
+
+- **CLI syntactic sugar** -- shortcut commands like `ddev composer`, `ddev npm`, `ddev wp`, `ddev drush`, `ddev artisan`, `ddev console`, etc.
+- **Container execution** -- when and how to use `ddev exec --dir` for targeting specific container paths
+- **Subpath mapping** -- resolving the correct container path when the agent runs from a subdirectory of a DDEV project (e.g., `wp-content/plugins/my-plugin` inside a WordPress site)
+
+The skill includes a `resolve-ddev-root.sh` script that walks up the directory tree to find the DDEV project root and computes the matching container path. It is excluded from the npm package via `.npmignore`.
 
 ## Custom Tools
 
