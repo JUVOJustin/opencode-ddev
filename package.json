@@ -3,7 +3,8 @@
   "version": "1.0.1",
   "type": "module",
   "description": "Adds context about ddev setup and improves command calling",
-  "main": "index.js",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/JUVOJustin/opencode-ddev-plugin.git"
@@ -23,14 +24,14 @@
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
-    "@opencode-ai/plugin": "^1.0.126"
+    "@opencode-ai/plugin": "^1.1.56"
   },
   "devDependencies": {
-    "@opencode-ai/plugin": "^1.0.126",
+    "@opencode-ai/plugin": "^1.1.56",
     "@types/node": "^24.10.1",
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "@opencode-ai/sdk": "^1.0.126"
+    "@opencode-ai/sdk": "^1.1.56"
   }
 }

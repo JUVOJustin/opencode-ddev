@@ -1,15 +1,12 @@
 import type { Plugin } from "@opencode-ai/plugin";
-import { createDdevLogsTool } from "./logs";
 
 /**
  * DDEV Plugin for OpenCode
  * 
- * Automatically detects DDEV availability and wraps bash commands
- * to execute inside the DDEV container.
+ * Detects DDEV availability and notifies the AI about the DDEV environment.
+ * The AI can then decide to adjust bash commands accordingly.
  */
 export const DDEVPlugin: Plugin = async ({ project, client, $, directory, worktree }) => {
-  const CONTAINER_ROOT = '/var/www/html' as const;
-  const HOST_ONLY_COMMANDS = ['git', 'gh', 'docker', 'ddev'] as const;
   const CACHE_DURATION_MS = 120000; // 2 minutes
 
   /**
@@ -20,6 +17,9 @@ export const DDEVPlugin: Plugin = async ({ project, client, $, directory, worktr
     approot?: string;
     status?: string;
     name?: string;
+    type?: string;
+    primary_url?: string;
+    urls?: string[];
     [key: string]: unknown;
   };
 
@@ -37,30 +37,6 @@ export const DDEVPlugin: Plugin = async ({ project, client, $, directory, worktr
   let hasAskedToStart = false;
 
   /**
-   * Expands tilde (~) in path to full home directory
-   */
-  const expandHomePath = (path: string): string => {
-    if (!path.startsWith('~')) {
-      return path;
-    }
-
-    const homeDir = process.env.HOME || process.env.USERPROFILE;
-    return path.replace('~', homeDir || '');
-  };
-
-  /**
-   * Gets the project root path from cached DDEV data
-   */
-  const getProjectRoot = (): string | null => {
-    if (!ddevCache?.raw) {
-      return null;
-    }
-
-    const rawPath = ddevCache.raw.shortroot || ddevCache.raw.approot;
-    return rawPath ? expandHomePath(rawPath) : null;
-  };
-
-  /**
    * Checks if DDEV is currently running based on cached data
    */
   const isRunning = (): boolean => {
@@ -75,106 +51,23 @@ export const DDEVPlugin: Plugin = async ({ project, client, $, directory, worktr
   };
 
   /**
-   * Maps host directory to container directory path
+   * Resolves the container working directory using the bundled script.
+   * Returns the container path for the current working directory.
    */
-  const mapToContainerPath = (hostDir: string, projectRoot: string): string => {
-    if (!hostDir.startsWith(projectRoot)) {
-      return CONTAINER_ROOT;
+  const getContainerWorkingDir = async (): Promise<string> => {
+    try {
+      // Resolve script path relative to the plugin directory (go up one level from dist/)
+      const scriptPath = new URL('../scripts/resolve-ddev-root.sh', import.meta.url).pathname;
+      const result = await $`bash ${scriptPath} ${directory || '.'}`.quiet().nothrow();
+
+      if (result.exitCode === 0) {
+        const data = JSON.parse(result.stdout.toString());
+        return data.container_path || '/var/www/html';
+      }
+    } catch (error) {
+      // Silent fail - return default
     }
-
-    const relativePath = hostDir
-      .slice(projectRoot.length)
-      .replace(/^\//, '');
-
-    if (!relativePath) {
-      return CONTAINER_ROOT;
-    }
-
-    return `${CONTAINER_ROOT}/${relativePath}`;
-  };
-
-  /**
-   * Gets the container working directory based on current host directory
-   */
-  const getContainerWorkingDir = (): string => {
-    const projectRoot = getProjectRoot();
-    if (!projectRoot) {
-      return CONTAINER_ROOT;
-    }
-
-    return mapToContainerPath(directory, projectRoot);
-  };
-
-  /**
-   * Escapes special regex characters in a string
-   */
-  const escapeRegex = (str: string): string => {
-    return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  };
-
-  /**
-   * Cleans host paths from the command and removes redundant cd commands.
-   * 
-   * - Converts host working directory paths to relative paths
-   * - Converts other project root paths to container paths
-   * - Removes `cd . &&` prefix (no-op after path conversion)
-   * 
-   * Examples:
-   *   mkdir -p /Users/foo/project/wp-content/plugins/sync/src/Class
-   *   → mkdir -p src/Class (when --dir is /var/www/html/wp-content/plugins/sync)
-   * 
-   *   cd /Users/foo/project/wp-content/plugins/sync && composer install
-   *   → composer install (cd to current dir is removed)
-   * 
-   *   cd /Users/foo/project/wp-content/themes && ls
-   *   → cd /var/www/html/wp-content/themes && ls (different dir is converted)
-   */
-  const cleanCommand = (command: string): string => {
-    const projectRoot = getProjectRoot();
-    if (!projectRoot) {
-      return command;
-    }
-
-    const containerWorkingDir = getContainerWorkingDir();
-
-    // Calculate the host path that corresponds to the container working directory
-    const containerRelative = containerWorkingDir.slice(CONTAINER_ROOT.length).replace(/^\//, '');
-    const hostWorkingDir = containerRelative
-      ? `${projectRoot}/${containerRelative}`
-      : projectRoot;
-
-    let cleanedCommand = command;
-
-    // Replace full host working directory paths with relative paths
-    const hostWorkingDirRegex = new RegExp(
-      escapeRegex(hostWorkingDir) + '(/[^\\s"\']*|(?=[\\s"\']|$))',
-      'g'
-    );
-
-    cleanedCommand = cleanedCommand.replace(hostWorkingDirRegex, (match, suffix) => {
-      const relativePath = suffix ? suffix.slice(1) : '.';
-      return relativePath;
-    });
-
-    // Replace any remaining project root paths with container paths (skip if same as hostWorkingDir)
-    if (hostWorkingDir !== projectRoot) {
-      const projectRootRegex = new RegExp(
-        escapeRegex(projectRoot) + '(/[^\\s"\']*|(?=[\\s"\']|$))',
-        'g'
-      );
-
-      cleanedCommand = cleanedCommand.replace(projectRootRegex, (match, suffix) => {
-        if (!suffix) {
-          return CONTAINER_ROOT;
-        }
-        return `${CONTAINER_ROOT}${suffix}`;
-      });
-    }
-
-    // Remove redundant "cd . &&" prefix (result of cd to current working dir)
-    cleanedCommand = cleanedCommand.replace(/^\s*cd\s+(?:\.|(["'])\.?\1)\s*&&\s*/, '');
-
-    return cleanedCommand;
+    return '/var/www/html';
   };
 
   /**
@@ -204,11 +97,17 @@ export const DDEVPlugin: Plugin = async ({ project, client, $, directory, worktr
    * Notifies LLM about DDEV environment on first command execution
    */
   const notifyDdevInSession = async (): Promise<void> => {
-    if (hasNotifiedSession || !currentSessionId) {
+    if (hasNotifiedSession || !currentSessionId || !ddevCache?.raw) {
       return;
     }
 
-    const containerWorkingDir = getContainerWorkingDir();
+    const raw = ddevCache.raw;
+    const projectName = raw.name || 'unknown';
+    const projectType = raw.type || 'unknown';
+    const containerWorkingDir = await getContainerWorkingDir();
+
+    let notificationText = `➡️  DDEV environment detected: **${projectName}** (${projectType})`;
+    notificationText += `\n\nTo execute commands inside the DDEV container, use \`ddev exec --dir="${containerWorkingDir}" <command>\`. For further details use the "ddev" skill.`;
 
     await client.session.prompt({
       path: { id: currentSessionId },
@@ -216,26 +115,13 @@ export const DDEVPlugin: Plugin = async ({ project, client, $, directory, worktr
         parts: [
           {
             type: 'text',
-            text: `➡️  DDEV environment is used. Execute commands inside the DDEV container like this: \`ddev exec --dir="${containerWorkingDir}" bash -c <command>\``,
+            text: notificationText,
           },
         ],
         noReply: true,
       },
     });
     hasNotifiedSession = true;
-  };
-
-  /**
-   * Logs a message using OpenCode's app-level logging
-   */
-  const log = async (level: 'debug' | 'info' | 'warn' | 'error', message: string): Promise<void> => {
-    await client.app.log({
-      body: {
-        service: 'ddev-plugin',
-        level,
-        message,
-      },
-    });
   };
 
   /**
@@ -266,7 +152,6 @@ export const DDEVPlugin: Plugin = async ({ project, client, $, directory, worktr
       try {
         data = JSON.parse(output);
       } catch (parseError) {
-        await log('error', `Failed to parse DDEV JSON output: ${parseError instanceof Error ? parseError.message : String(parseError)}`);
         ddevCache = null;
         return;
       }
@@ -287,34 +172,9 @@ export const DDEVPlugin: Plugin = async ({ project, client, $, directory, worktr
 
       ddevCache = { timestamp: now, raw };
     } catch (error) {
-      await log('error', `DDEV status check failed: ${error instanceof Error ? error.message : String(error)}`);
       ddevCache = null;
     }
   }
-
-  /**
-   * Determines if command should run on host instead of container
-   */
-  const shouldRunOnHost = (command: string): boolean => {
-    if (command.startsWith('ddev ')) {
-      return true;
-    }
-
-    const firstWord = command.trim().split(/\s+/)[0];
-    return HOST_ONLY_COMMANDS.includes(firstWord as typeof HOST_ONLY_COMMANDS[number]);
-  };
-
-  /**
-   * Wraps command with ddev exec for container execution.
-   * Cleans host paths and removes redundant cd commands.
-   */
-  const wrapWithDdevExec = (command: string): string => {
-    const cleanedCommand = cleanCommand(command);
-    const containerWorkingDir = getContainerWorkingDir();
-    const escapedCommand = JSON.stringify(cleanedCommand);
-
-    return `ddev exec --dir=${JSON.stringify(containerWorkingDir)} bash -c ${escapedCommand}`;
-  };
 
   // Initialize DDEV detection
   await refreshDdevCache();
@@ -332,13 +192,15 @@ export const DDEVPlugin: Plugin = async ({ project, client, $, directory, worktr
     },
 
     'tool.execute.before': async (input, output) => {
+      // Only process bash commands
       if (input.tool !== 'bash') {
         return;
       }
 
       const originalCommand = output.args.command as string;
 
-      if (shouldRunOnHost(originalCommand)) {
+      // Skip ddev commands - let them run normally (case-insensitive)
+      if (originalCommand.toLowerCase().startsWith('ddev ')) {
         return;
       }
 
@@ -356,30 +218,17 @@ export const DDEVPlugin: Plugin = async ({ project, client, $, directory, worktr
         return;
       }
 
-      // DDEV not running - don't wrap commands
+      // DDEV not running - don't notify
       if (!isRunning()) {
         return;
       }
 
-      // DDEV is running - notify and wrap command
+      // DDEV is running - notify about the environment (AI can then adjust commands)
       if (!hasNotifiedSession) {
         await notifyDdevInSession();
       }
-
-      const wrappedCommand = wrapWithDdevExec(originalCommand);
-      output.args.command = wrappedCommand;
-
-      // Log if command was modified
-      if (originalCommand !== wrappedCommand && !originalCommand.startsWith('ddev exec')) {
-        await log('debug', `Wrapped command: ${originalCommand.substring(0, 80)}${originalCommand.length > 80 ? '...' : ''}`);
-      }
     },
-
-    // Register custom tools only if DDEV project exists (running or stopped)
-    ...(hasProject ? {
-      tool: {
-        ddev_logs: createDdevLogsTool($),
-      },
-    } : {}),
   };
 };
+
+export default DDEVPlugin;
