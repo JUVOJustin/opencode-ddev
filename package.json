@@ -1,6 +1,6 @@
 {
   "name": "opencode-ddev",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "type": "module",
   "description": "Adds context about ddev setup and improves command calling",
   "main": "dist/index.js",
