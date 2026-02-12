@@ -7,7 +7,7 @@
   "types": "dist/index.d.ts",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/JUVOJustin/opencode-ddev-plugin.git"
+    "url": "git+https://github.com/JUVOJustin/opencode-ddev.git"
   },
   "keywords": [
     "opencode",
