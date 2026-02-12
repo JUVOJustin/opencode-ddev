@@ -22,15 +22,33 @@ ddev yarn add <pkg>            # runs yarn inside the container
 ddev php -v                    # runs PHP inside the container
 ```
 
-For the full list of shortcuts and their mappings, see [references/commands.md](references/commands.md).
+For the full list of shortcuts and their mappings, run `ddev help`.
 
-## Executing CLI Commands (Step-by-Step)
+## DDEV Commands Work from Any Subdirectory
 
-Always follow these steps before running any CLI tool (composer, npm, wp, drush, yarn, phpunit, etc.) in a DDEV project:
+DDEV automatically detects its project root from any subdirectory within the project tree. Most DDEV commands work out of the box regardless of where the shell is located:
 
-### Step 1: Resolve the correct container path
+```bash
+ddev wp plugin list
+ddev mailpit
+ddev db
+ddev composer show
+ddev npm ls
+ddev drush cr
+ddev start
+ddev describe
+ddev ssh
+```
 
-Determine whether the working directory is the DDEV project root or a subdirectory. Run the bundled resolve script:
+No special flags or path resolution is needed for these commands.
+
+## When `--dir` Scoping IS Required
+
+The `--dir` flag is only needed when running **file-path-sensitive scripts** via `ddev exec` that must target a specific subdirectory inside the container. This applies when the command operates on files relative to the working directory (e.g., `composer install` reading a specific `composer.json`, or `npm install` reading a specific `package.json`).
+
+### Step 1: Resolve the container path
+
+Run the bundled resolve script to map the host subdirectory to a container path:
 
 ```bash
 scripts/resolve-ddev-root.sh "$(pwd)"
@@ -46,40 +64,33 @@ Output (JSON):
 }
 ```
 
-- `relative_path` **empty** -- working directory is the DDEV root, shortcuts work directly.
-- `relative_path` **non-empty** -- working directory is a subdirectory, use `--dir` with the `container_path` value in all commands.
+- `relative_path` **empty** -- working directory is the DDEV root, no `--dir` needed.
+- `relative_path` **non-empty** -- use `--dir` with the `container_path` value for file-path-sensitive commands.
 
-### Step 2: Execute command
+### Step 2: Execute the scoped command
 
 If DDEV is not running, start it first with `ddev start`.
 
-**At the project root** (relative_path is empty) -- use DDEV shortcuts:
-
 ```bash
-ddev composer install
-ddev npm run build
-ddev wp plugin list
-ddev yarn add <pkg>
-```
-
-**From a subdirectory** (relative_path is non-empty) -- use `ddev exec --dir`:
-
-```bash
+# Install dependencies scoped to a plugin subdirectory
 ddev exec --dir="/var/www/html/wp-content/plugins/my-plugin" bash -c "composer install"
-ddev exec --dir="/var/www/html/wp-content/plugins/my-plugin" bash -c "wp plugin activate my-plugin"
+ddev exec --dir="/var/www/html/wp-content/plugins/my-plugin" bash -c "npm install"
+
+# Run a script that reads files relative to the working directory
+ddev exec --dir="/var/www/html/wp-content/plugins/my-plugin" bash -c "phpunit"
 ```
 
-The `--dir` flag is required whenever the target directory differs from the container docroot (`/var/www/html`). Without it, commands run at the docroot and may operate on the wrong `composer.json`, `package.json`, or project context.
+Without `--dir`, these commands run at the container docroot (`/var/www/html`) and operate on the wrong `composer.json`, `package.json`, or project context.
 
 ## Running Commands in Containers
 
-Use `ddev exec` when a shortcut does not exist or when targeting a specific directory:
+Use `ddev exec` when no shortcut exists or when you need to target a specific container directory:
 
 ```bash
-# Default: runs in web container at docroot
+# Runs in web container at docroot
 ddev exec ls -la
 
-# Specify a working directory inside the container
+# Scope to a subdirectory for file-path-sensitive operations
 ddev exec --dir="/var/www/html/wp-content/plugins/my-plugin" bash -c "composer install"
 
 # Run in the database container
@@ -89,15 +100,9 @@ ddev exec -s db mysql -e "SHOW DATABASES"
 ddev . ls -la
 ```
 
-Use `ddev ssh` for an interactive shell session.
+## Subpath Mapping (for `ddev exec --dir`)
 
-## Subpath Mapping (Working from a Subdirectory)
-
-A common scenario: the DDEV project is configured for a full application (e.g., a WordPress site at `~/Projects/mysite/`) but the agent runs from a subdirectory (e.g., `~/Projects/mysite/wp-content/plugins/my-plugin/`).
-
-### The Problem
-
-DDEV commands must reference container paths relative to `/var/www/html` (the container docroot). When the working directory is a subdirectory of the DDEV project, the container path must be computed.
+Path resolution is only needed when using `ddev exec --dir` to scope file-path-sensitive scripts to a subdirectory. Standard DDEV commands (`ddev wp`, `ddev mailpit`, `ddev db`, `ddev start`, etc.) do **not** require this -- they work from any subdirectory automatically.
 
 ### Resolving the DDEV Root
 
@@ -151,4 +156,5 @@ Example JSON output fields:
 - **resolve-ddev-root.sh** - Walks up the directory tree to find the DDEV project root from any subdirectory. Returns JSON with project root, container path, relative path, and project name.
 
 ### references/
-- **commands.md** - Quick-reference table of all DDEV CLI shortcuts, lifecycle commands, database tools, and debugging commands.
+- **npm-projects.md** - Running npm/Node.js dev servers in DDEV, including port exposure, host binding, and framework-specific examples for Vite, Next.js, and Astro.
+- **wordpress-multisite.md** - Setup guide for WordPress Multisite with DDEV, covering subdomains, different hostnames, and subdirectory configurations with WP-CLI commands.
