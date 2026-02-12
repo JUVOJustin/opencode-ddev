@@ -246,7 +246,7 @@ web_extra_daemons:
 | Use yarn | `ddev yarn dev` |
 | Check Node.js version | `ddev exec node -v` |
 | View dev server logs | `ddev logs -s web` |
-| Kill stuck process | `ddev exec "pkill -f node"` |
+| Kill stuck process | `ddev exec bash -c "pkill -f node"` |
 
 ## Troubleshooting
 
